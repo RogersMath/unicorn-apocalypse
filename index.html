@@ -24,22 +24,22 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
 .row{display:flex;flex-wrap:wrap;justify-content:center;margin-top:22px}
 .hud{position:fixed;inset:0;display:none;pointer-events:none;z-index:4}
 .hud.on{display:block}
-#score{position:absolute;left:20px;top:14px;font:700 clamp(26px,5vw,46px)/1 "Trebuchet MS",sans-serif;
-  color:#fff;letter-spacing:.02em;font-variant-numeric:tabular-nums;
+#score,#clock,#cx{position:absolute;font-weight:700;line-height:1;
+  font-variant-numeric:tabular-nums;letter-spacing:.03em}
+#score{left:20px;top:14px;font-size:clamp(26px,5vw,46px);color:#fff;
   text-shadow:0 0 18px #8f6bff88,0 3px 10px #000}
-#score span{display:block;font:400 10px/1 var(--m,monospace);letter-spacing:.34em;
-  color:#8f88a0;margin-bottom:5px}
-#clock{position:absolute;left:50%;top:14px;transform:translateX(-50%);
-  font:700 clamp(28px,6vw,54px)/1 "Trebuchet MS",sans-serif;color:#e6e2f2;
-  font-variant-numeric:tabular-nums;letter-spacing:.04em;text-shadow:0 3px 12px #000}
+#clock{left:50%;top:14px;transform:translateX(-50%);color:#e6e2f2;
+  font-size:clamp(28px,6vw,54px);text-shadow:0 3px 12px #000}
 #clock.low{color:#ff9a7a;animation:tick .5s steps(2,end) infinite}
 @keyframes tick{50%{opacity:.45}}
 #combo{position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);text-align:center;
   opacity:0;transition:opacity .25s}
 #combo.on{opacity:1}
-#cx{display:block;font:700 clamp(44px,11vw,104px)/1 "Trebuchet MS",sans-serif;
+#cx{position:static;display:block;font-size:clamp(44px,11vw,104px);
   color:#cbb4ff;text-shadow:0 0 34px currentColor}
-#cn{display:block;font:400 11px/1 monospace;letter-spacing:.36em;color:#9a93ad;margin-top:8px}
+#score span,#cn,#open b{display:block;font:400 11px/1 monospace}
+#score span{letter-spacing:.34em;color:#8f88a0;margin-bottom:5px}
+#cn{letter-spacing:.36em;color:#9a93ad;margin-top:8px}
 #combo.pop #cx{animation:pp .22s cubic-bezier(.2,1.6,.4,1)}
 @keyframes pp{from{transform:scale(1.34)}to{transform:scale(1)}}
 #toast{position:fixed;left:50%;top:70%;letter-spacing:.22em;transform:translateX(-50%);z-index:4;pointer-events:none;
@@ -55,8 +55,7 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
   font-size:clamp(15px,2.5vw,23px);line-height:1.6;color:#e3d6f2;opacity:0;
   transition:opacity .8s;text-shadow:0 3px 16px #000}
 #open.on{opacity:1}
-#open b{display:block;font:400 11px/1 monospace;letter-spacing:.4em;color:#a07fd0;
-  margin-bottom:14px}
+#open b{letter-spacing:.4em;color:#a07fd0;margin-bottom:14px}
 #toast.good{color:#cbb4ff}
 #toast.off{color:#8f8a9c}
 </style>
@@ -71,8 +70,8 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
 </div>
 <div id="toast"></div>
 <div id="open"><b>GRIM</b>Unicorns give colour. I have transcended. Now I take.<br>
-Try to stop me, little ones. You only feed my ambition.</div>
-<button id="gear" aria-label="Pause">&#9208;</button>
+Come, little ones. You only feed my ambition.</div>
+<button id="gear">&#9208;</button>
 
 <div class="scr" id="pause"><div class="lbl">Paused</div>
   <h1 style="font-size:clamp(24px,5vw,42px)">Hold still</h1>
@@ -444,11 +443,11 @@ function push(px,py,pz,sx,sy,rot,tile,r,g,b,a,uo,vo,us,vs){
 /* ---------------------------- targets ------------------------------ */
 let SW=256,SH=144, simTex=[], simFbo=[], cur=0, FT=gl.HALF_FLOAT, FI=gl.RGBA16F;
 let sceneTex=null, sceneFbo=null, bgTex=null, bgFbo=null, outW=2, outH=2;
-function mkTex(w,h,fi,ft,filt){
+function mkTex(w,h,fi,ft){
   const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
   gl.texImage2D(gl.TEXTURE_2D,0,fi,w,h,0,gl.RGBA,ft,null);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,filt||gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,filt||gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
   const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f);
@@ -480,7 +479,7 @@ function resize(){
 }
 addEventListener('resize',resize); resize();
 /* bake the backdrop once */
-(function bakeBG(){
+(function(){
   [bgTex,bgFbo]=mkTex(1024,576,gl.RGBA8,gl.UNSIGNED_BYTE);
   gl.bindFramebuffer(gl.FRAMEBUFFER,bgFbo); gl.viewport(0,0,1024,576);
   gl.useProgram(pBG); gl.bindVertexArray(emptyVao); gl.drawArrays(gl.TRIANGLES,0,3);
@@ -863,7 +862,6 @@ function bumpCombo(){
   el.classList.add('on'); el.classList.remove('pop');
   void el.offsetWidth; el.classList.add('pop');
 }
-let hudTick=0;
 function paintHud(){
   const sc=$('score');
   if(sc.lastChild.nodeValue!==String(score)) sc.lastChild.nodeValue=score.toLocaleString();
