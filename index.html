@@ -50,6 +50,13 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
   border:1px solid #6b4a63;border-radius:10px;background:#150c1acc;color:#d7c9e4;
   font-size:15px;cursor:pointer}
 #gear.on{display:block}
+#open{position:fixed;left:50%;top:44%;transform:translate(-50%,-50%);z-index:4;
+  pointer-events:none;width:min(660px,84vw);text-align:center;font-family:Georgia,serif;
+  font-size:clamp(15px,2.5vw,23px);line-height:1.6;color:#e3d6f2;opacity:0;
+  transition:opacity .8s;text-shadow:0 3px 16px #000}
+#open.on{opacity:1}
+#open b{display:block;font:400 11px/1 monospace;letter-spacing:.4em;color:#a07fd0;
+  margin-bottom:14px}
 #toast.good{color:#cbb4ff}
 #toast.off{color:#8f8a9c}
 </style>
@@ -63,6 +70,8 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
   <div id="combo"><b id="cx">2×</b><b id="cn">CHAIN 0</b></div>
 </div>
 <div id="toast"></div>
+<div id="open"><b>GRIM</b>Unicorns give colour. I have transcended. Now I take.<br>
+Try to stop me, little ones. You only feed my ambition.</div>
 <button id="gear" aria-label="Pause">&#9208;</button>
 
 <div class="scr" id="pause"><div class="lbl">Paused</div>
@@ -85,6 +94,7 @@ h2{font-family:Georgia,serif;font-weight:400;font-size:clamp(18px,3.4vw,26px);ma
     <button class="pill" id="mTouch">Mobile<b>SWIPE</b></button>
     <button class="pill" id="mXR" style="display:none">Headset<b>ROOM SCALE</b></button>
   </div>
+  <div class="lbl" id="tbest" style="margin:16px 0 0"></div>
   <div class="by">Made by Jesse Rogers for JS13kGames</div>
 </div>
 
@@ -115,10 +125,11 @@ gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_h
 /* ----------------------------- tuning ------------------------------ */
 const BPM=96, SPB=60/BPM;
 const SPEED=8.4, LEAD=2.35;
-const HITZ=-0.85, WIN=0.58;
+const HITZ=-1.05, WIN=1.05;
 const LANES=[-0.56,0,0.56], ROWS=[1.02,1.56];
 const FEYE=1.32;
 const CW=0.50, CH=0.40;
+const PREROLL=7.0;            // the Grim speaks before anything moves
 const LAST_BEAT=288;          // 3:00 of ranks at 96 BPM
 const SLEEP_BEATS=22;         // the flutes and the lullaby, after the last rank
 const DIRV=[[0,0],[0,-1],[0,1],[-1,0],[1,0]];
@@ -127,6 +138,10 @@ const DIRV=[[0,0],[0,-1],[0,1],[-1,0],[1,0]];
 let mode='desk', notes=[], nextNote=0, live=[], halves=[], shards=[];
 let running=false, songT=0, dark=0.16, sleep=0;
 let score=0, combo=0, bestCombo=0, hits=0, missed=0, mult=1, paused=false;
+let best=0; try{ best=+localStorage.getItem('usaBest')||0; }catch(e){}
+function saveBest(){ if(score<=best) return; best=score;
+  try{ localStorage.setItem('usaBest',best); }catch(e){} }
+
 let tipPrev=null, tipNow=null, swing=0, bladeBase=null, bladeQuad=null;
 let xrMode=false, xrSession=null, xrRef=null;
 let flash=0, absorb=0, pointerXY=null, pointerDown=false;
@@ -678,11 +693,11 @@ function reset(){
 function startRun(){
   reset(); initAudio();
   if(actx.state==='suspended') actx.resume();
-  audioStart=actx.currentTime+.35;
+  audioStart=actx.currentTime+PREROLL;
   running=true; paused=false; mult=1;
   $('hud').classList.add('on');
   if(!xrMode) $('gear').classList.add('on');
-  $('pause').classList.remove('on');
+  $('pause').classList.remove('on'); $('open').className='';
   if(musicBus) musicBus.gain.value=musicOn?.5:0;
   if(sfxBus) sfxBus.gain.value=sfxOn?.55:0;
 }
@@ -730,13 +745,40 @@ function trySlice(){
   // the whole horn sweeps, so the swept area is the path of the tip AND the
   // length of the blade itself at both ends of that path
   const bb=bladeBase||[tipNow[0],tipNow[1]-.6,tipNow[2]];
-  const REACH=Math.max(CW,CH)*.62+.09;
+
+  /* On a flat screen the honest question is "did the drawn horn cross the drawn
+     rank", so the test happens where both are drawn: projected screen space.
+     Any part of the horn counts, and so does the ground it swept between
+     frames. In XR the horn is a real object and the test stays in world space. */
+  const flat=!xrMode;
+  const ASP=outW/outH;
+  let P0,P1,PB;
+  if(flat){
+    P0=project(mVP,tipPrev[0],tipPrev[1],tipPrev[2]);
+    P1=project(mVP,tipNow[0],tipNow[1],tipNow[2]);
+    PB=project(mVP,bb[0],bb[1],bb[2]);
+    if(!P0||!P1||!PB) return;
+  }
+  const WREACH=Math.max(CW,CH)*.62+.30;
   for(const c of live){
     if(c.hit || Math.abs(c.z-HITZ)>WIN) continue;
-    const d=Math.min(
-      segDist(tipPrev[0],tipPrev[1],tipNow[0],tipNow[1], c.x,c.y),
-      segDist(bb[0],bb[1],tipNow[0],tipNow[1], c.x,c.y),
-      segDist(bb[0],bb[1],tipPrev[0],tipPrev[1], c.x,c.y));
+    let d, REACH;
+    if(flat){
+      const C=project(mVP,c.x,c.y,c.z), E=project(mVP,c.x+CW*.5,c.y+CH*.5,c.z);
+      if(!C||!E) continue;
+      REACH=Math.max(Math.abs(E[0]-C[0])*ASP, Math.abs(E[1]-C[1]))+.035;
+      const cx=C[0]*ASP, cy=C[1];
+      d=Math.min(
+        segDist(P0[0]*ASP,P0[1],P1[0]*ASP,P1[1], cx,cy),
+        segDist(PB[0]*ASP,PB[1],P1[0]*ASP,P1[1], cx,cy),
+        segDist(PB[0]*ASP,PB[1],P0[0]*ASP,P0[1], cx,cy));
+    } else {
+      REACH=WREACH;
+      d=Math.min(
+        segDist(tipPrev[0],tipPrev[1],tipNow[0],tipNow[1], c.x,c.y),
+        segDist(bb[0],bb[1],tipNow[0],tipNow[1], c.x,c.y),
+        segDist(bb[0],bb[1],tipPrev[0],tipPrev[1], c.x,c.y));
+    }
     if(d>REACH) continue;
     let ok=true;
     if(c.d){ const v=DIRV[c.d]; ok=(ux*v[0]+uy*v[1])>.42; }
@@ -776,7 +818,12 @@ function haptic(s,ms){
 }
 function step(dt){
   songT=actx?(actx.currentTime-audioStart):songT+dt;
-  if(songT<0) return;
+  if(songT<0){
+    // the ranks are not moving yet; only the voice is
+    $('open').classList.toggle('on', songT>-PREROLL+0.4 && songT<-0.9);
+    return;
+  }
+  if($('open').className) $('open').className='';
   schedule(); spawnDue();
   for(let i=live.length-1;i>=0;i--){
     const c=live[i];
@@ -1065,6 +1112,7 @@ if(navigator.xr&&navigator.xr.isSessionSupported)
 
 /* ------------------------------- flow ------------------------------ */
 function hideAll(){ $('title').classList.remove('on'); $('end').classList.remove('on'); }
+if(best) $('tbest').textContent='BEST '+best.toLocaleString();
 $('mDesk').onclick =()=>{ mode='desk';  hideAll(); startRun(); };
 $('mTouch').onclick=()=>{ mode='touch'; hideAll(); startRun(); };
 $('mXR').onclick   =()=>{ initAudio(); enterXR(); };
@@ -1074,11 +1122,14 @@ function finish(){
   running=false;
   $('hud').classList.remove('on'); $('toast').classList.remove('on');
   $('gear').classList.remove('on');
+  const prev=best; saveBest();
   const acc=hits/Math.max(1,hits+missed);
   const r=RANKS.find(x=>acc>=x[0])||RANKS[4];
   $('etitle').textContent=score.toLocaleString();
   $('eline').textContent='RANK '+r[1]+'  \u00b7  '+Math.round(acc*100)+'%';
-  $('estat').textContent='best chain '+bestCombo+' \u00b7 '+hits+' cut, '+missed+' let through';
+  $('estat').textContent='best chain '+bestCombo+' \u00b7 '+hits+' cut, '+missed+' let through'
+    +(score>prev&&prev>0 ? ' \u00b7 NEW BEST' : prev? ' \u00b7 best '+prev.toLocaleString() : '');
+  $('tbest').textContent = best? 'BEST '+best.toLocaleString() : '';
   $('end').classList.add('on');
 }
 let musicOn=true, sfxOn=true;
