@@ -131,7 +131,6 @@ const CW=0.50, CH=0.40;
 const PREROLL=7.0;            // the Grim speaks before anything moves
 const LAST_BEAT=288;          // 3:00 of ranks at 96 BPM
 const SLEEP_BEATS=22;         // the flutes and the lullaby, after the last rank
-const DIRV=[[0,0],[0,-1],[0,1],[-1,0],[1,0]];
 
 /* ----------------------------- state ------------------------------- */
 let mode='desk', notes=[], nextNote=0, live=[], halves=[], shards=[];
@@ -145,6 +144,9 @@ let tipPrev=null, tipNow=null, swing=0, bladeBase=null, bladeQuad=null;
 let xrMode=false, xrSession=null, xrRef=null;
 let worldYaw=0, yawSet=false, xrErr='', btnWas=false;
 let flash=0, absorb=0, pointerXY=null, pointerDown=false;
+/* A phone in portrait sees far less width than a monitor. Squeeze the lanes
+   and the ranks to fit, instead of charging down corridors nobody can reach. */
+let laneScale=1, cw=CW, ch=CH;
 let pokes=[];                                   // queued disturbances for the water
 
 /* ============================ shaders ============================== */
@@ -313,7 +315,7 @@ const dS=U(pDream,'S'), dT=U(pDream,'T'), dP=U(pDream,'P'), dA=U(pDream,'A'),
       dSleep=U(pDream,'uSleep');
 
 /* ------------------------- procedural atlas ------------------------ */
-/* 512x512, four tiles: 0 winged rank, 1 chevron, 2 glow, 3 ground rank */
+/* 1024x1024, 4x4 grid: 0 winged rank, 2 glow, 3 ground rank, 4 horn */
 function unicorn(x, wings){
   /* proportions lifted from Athena's SDF in Sugarwind: deep body, long neck,
      high head, the horn carrying past it, one wing raised as a sail */
@@ -378,11 +380,6 @@ function buildAtlas(){
   const a=document.createElement('canvas'); a.width=a.height=1024;
   const x=a.getContext('2d');
   x.save(); rank(x,true);  x.restore();                          // tile 0
-  x.save(); x.translate(256,0);                                  // tile 1 chevron
-    x.fillStyle='#fff'; x.beginPath();
-    x.moveTo(128,56); x.lineTo(198,140); x.lineTo(160,140); x.lineTo(160,200);
-    x.lineTo(96,200); x.lineTo(96,140); x.lineTo(58,140); x.closePath(); x.fill();
-  x.restore();
   x.save(); x.translate(512,0);                                  // tile 2 glow
     const g=x.createRadialGradient(128,128,2,128,128,126);
     g.addColorStop(0,'rgba(255,255,255,1)'); g.addColorStop(.35,'rgba(255,255,255,.42)');
@@ -477,6 +474,9 @@ function resize(){
   const rs=Math.min(1, 1400/outW);
   [sceneTex,sceneFbo]=mkTex(Math.max(2,outW*rs|0),Math.max(2,outH*rs|0),gl.RGBA8,gl.UNSIGNED_BYTE);
   sceneTex.w=Math.max(2,outW*rs|0); sceneTex.h=Math.max(2,outH*rs|0);
+  const halfW=Math.tan(1.15/2)*(-HITZ)*(outW/outH);
+  laneScale=Math.min(1, halfW*.80/LANES[2]);
+  cw=CW*Math.min(1,.42+.58*laneScale); ch=CH*Math.min(1,.62+.38*laneScale);
 }
 addEventListener('resize',resize); resize();
 /* bake the backdrop once */
@@ -515,22 +515,24 @@ function project(vp,x,y,z){
    Fewer ranks than a two-handed map would carry — these are units, not notes. */
 function rng(s){ return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
 function buildMap(){
-  const r=rng(20260909), out=[]; let lastDir=1;
+  const r=rng(20260909), out=[];
+  let lastLane=1, lastRow=0;
   const secs=[[8,48,2,0],[48,88,1.5,.14],[88,128,1.25,.2],[128,160,1.5,.12],
               [160,200,1,.24],[200,240,1,.3],[240,272,.75,.34],[272,LAST_BEAT,1.5,.1]];
   for(const [b0,b1,gap,sweep] of secs){
     let b=b0;
     while(b<b1){
       if(r()<sweep){
-        const dir=r()<.5?3:4, ord=dir===4?[0,1,2]:[2,1,0], row=r()<.5?0:1;
-        for(let i=0;i<3;i++) out.push({b:b+i*.75, lane:ord[i], row, d:dir});
-        lastDir=dir; b+=3; continue;
+        // a cavalry sweep: one rank per lane, crossing in front of you
+        const ord=r()<.5?[0,1,2]:[2,1,0], row=r()<.5?0:1;
+        for(let i=0;i<3;i++) out.push({b:b+i*.75, lane:ord[i], row});
+        lastLane=ord[2]; lastRow=row; b+=3; continue;
       }
-      let d = lastDir===1 ? (r()<.8?2:0) : lastDir===2 ? (r()<.8?1:0) : (r()<.5?1:2);
-      if(r()<.16) d=0;
-      const row = d===1?1 : d===2?0 : (r()<.5?0:1);
-      out.push({b, lane:(r()*3)|0, row, d});
-      lastDir=d||lastDir;
+      // avoid repeating the same slot twice running so the arm keeps moving
+      let lane=(r()*3)|0, row=r()<.5?0:1;
+      if(lane===lastLane&&row===lastRow){ lane=(lane+1+((r()*2)|0))%3; row=1-row; }
+      out.push({b,lane,row});
+      lastLane=lane; lastRow=row;
       b += gap*(r()<.3?.75:1);
     }
   }
@@ -712,7 +714,7 @@ const TINTS=[[1,.42,.5],[1,.68,.36],[1,.9,.5],[.6,.95,.66],[.5,.8,1],[.72,.6,1],
 function spawnDue(){
   while(nextNote<notes.length && notes[nextNote].b*SPB-LEAD<=songT){
     const n=notes[nextNote++];
-    live.push({x:LANES[n.lane], y:ROWS[n.row], z:-(LEAD*SPEED)+(songT-(n.b*SPB-LEAD))*SPEED,
+    live.push({x:LANES[n.lane]*laneScale, y:ROWS[n.row], z:-(LEAD*SPEED)+(songT-(n.b*SPB-LEAD))*SPEED,
                d:n.d, row:n.row, hit:false, b:n.b});
   }
 }
@@ -730,7 +732,7 @@ function splitCard(c,ux,uy,tint){
   const ang=Math.atan2(uy,ux);
   const nx=-uy, ny=ux;                      // perpendicular: the parting direction
   for(const s of [1,-1]){
-    halves.push({x:c.x+nx*s*CH*.26, y:c.y+ny*s*CH*.26, z:c.z, vx:nx*s*1.5+ux*.5, vy:ny*s*1.5+uy*.5+.4, vz:1.2+Math.random()*.6,
+    halves.push({x:c.x+nx*s*ch*.26, y:c.y+ny*s*ch*.26, z:c.z, vx:nx*s*1.5+ux*.5, vy:ny*s*1.5+uy*.5+.4, vz:1.2+Math.random()*.6,
       rot:ang, vr:s*2.6, t:0, life:.85, tile:c.row?0:3, tint,
       // the half of the sprite that lies on this side of the cut
       uo:0, vo:s>0?.5:0, us:1, vs:.5, ang});
@@ -747,7 +749,7 @@ function trySlice(){
   if(!tipPrev||!tipNow) return;
   const dx=tipNow[0]-tipPrev[0], dy=tipNow[1]-tipPrev[1], len=Math.hypot(dx,dy);
   swing=len;
-  if(len<.035) return;
+  if(len<.022) return;
   const ux=dx/len, uy=dy/len;
   // the whole horn sweeps, so the swept area is the path of the tip AND the
   // length of the blade itself at both ends of that path
@@ -766,14 +768,14 @@ function trySlice(){
     PB=project(mVP,bb[0],bb[1],bb[2]);
     if(!P0||!P1||!PB) return;
   }
-  const WREACH=Math.max(CW,CH)*.62+.30;
+  const WREACH=Math.max(cw,ch)*.62+.30;
   for(const c of live){
     if(c.hit || Math.abs(c.z-HITZ)>WIN) continue;
     let d, REACH;
     if(flat){
-      const C=project(mVP,c.x,c.y,c.z), E=project(mVP,c.x+CW*.5,c.y+CH*.5,c.z);
+      const C=project(mVP,c.x,c.y,c.z), E=project(mVP,c.x+cw*.5,c.y+ch*.5,c.z);
       if(!C||!E) continue;
-      REACH=Math.max(Math.abs(E[0]-C[0])*ASP, Math.abs(E[1]-C[1]))+.035;
+      REACH=Math.max(Math.abs(E[0]-C[0])*ASP, Math.abs(E[1]-C[1]))+.075;
       const cx=C[0]*ASP, cy=C[1];
       d=Math.min(
         segDist(P0[0]*ASP,P0[1],P1[0]*ASP,P1[1], cx,cy),
@@ -787,11 +789,9 @@ function trySlice(){
         segDist(bb[0],bb[1],tipPrev[0],tipPrev[1], c.x,c.y));
     }
     if(d>REACH) continue;
-    let ok=true;
-    if(c.d){ const v=DIRV[c.d]; ok=(ux*v[0]+uy*v[1])>.42; }
     c.hit=true;
     const tint=TINTS[(c.b|0)%7];
-    if(ok){
+    {
       hits++; combo++; bestCombo=Math.max(bestCombo,combo);
       mult = combo>=24?8 : combo>=12?4 : combo>=5?2 : 1;
       const timing=1-Math.min(1,Math.abs(c.z-HITZ)/WIN);
@@ -805,10 +805,6 @@ function trySlice(){
       toast(timing>.62?'GOOD HIT':(c.z<HITZ?'TOO EARLY':'TOO LATE'),
             timing>.62?'good':'off');
       cardPoke(c, .30+.18*Math.min(combo,10)/10);
-    } else {
-      combo=0; mult=1; sfxSlice(false); haptic(.25,16);
-      burst(c.x,c.y,c.z,ux,uy,4,[.6,.6,.66]);
-      cardPoke(c,.12);
     }
   }
 }
@@ -897,19 +893,16 @@ function buildInstances(){
     const near=Math.min(1,Math.max(0,(c.z+LEAD*SPEED)/(LEAD*SPEED)));   // 0 far, 1 here
     const tint=TINTS[(c.b|0)%7];
     const gl2=(.30+1.5*near*near)*fade;
-    push(c.x,c.y,c.z-.05, CW*(2.1+2.4*near),CH*(2.1+2.4*near), 0, 2,
+    push(c.x,c.y,c.z-.05, cw*(2.1+2.4*near),ch*(2.1+2.4*near), 0, 2,
          tint[0],tint[1],tint[2], gl2*.42);
-    push(c.x,c.y,c.z-.03, CW*1.5,CH*1.5, 0, 2, tint[0],tint[1],tint[2], gl2*.5);
-    push(c.x,c.y,c.z, CW,CH, 0, c.row?0:3,
+    push(c.x,c.y,c.z-.03, cw*1.5,ch*1.5, 0, 2, tint[0],tint[1],tint[2], gl2*.5);
+    push(c.x,c.y,c.z, cw,ch, 0, c.row?0:3,
          tint[0]*(.7+.6*near),tint[1]*(.7+.6*near),tint[2]*(.7+.6*near), fade);
-    if(c.d){
-      const rot=c.d===1?Math.PI: c.d===2?0: c.d===3?Math.PI*.5: -Math.PI*.5;
-      push(c.x,c.y,c.z+.012, .14,.14, rot, 1, 1,1,1, fade);
-    } else push(c.x,c.y,c.z+.012, .13,.13, 0, 2, 1,1,1, fade*.9);
+    push(c.x,c.y,c.z+.012, .15,.15, 0, 2, 1,1,1, fade*.95);
   }
   for(const h of halves){
     const k=1-h.t/h.life;
-    push(h.x,h.y,h.z, CW,CH*.5, h.rot, h.tile, h.tint[0],h.tint[1],h.tint[2], k,
+    push(h.x,h.y,h.z, cw,ch*.5, h.rot, h.tile, h.tint[0],h.tint[1],h.tint[2], k,
          h.uo,h.vo,h.us,h.vs);
   }
   for(const s of shards){
@@ -936,6 +929,7 @@ function buildInstances(){
 function drawScene(vp,vw,vh,fb,vx,vy){
   gl.bindFramebuffer(gl.FRAMEBUFFER,fb||null);
   gl.viewport(vx|0,vy|0,vw|0,vh|0);
+  gl.enable(gl.SCISSOR_TEST); gl.scissor(vx|0,vy|0,vw|0,vh|0);
   gl.disable(gl.DEPTH_TEST);
   /* backdrop */
   gl.bindVertexArray(emptyVao);
@@ -963,6 +957,7 @@ function drawScene(vp,vw,vh,fb,vx,vy){
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,1);
   }
   gl.disable(gl.BLEND); gl.bindVertexArray(null);
+  gl.disable(gl.SCISSOR_TEST);
 }
 /* the backdrop blit, dimmed as the Grim takes the world */
 const BGD=`#version 300 es
@@ -1002,11 +997,12 @@ function panel(txt){
 function drawPanel(vp){
   const left=Math.max(0,LAST_BEAT*SPB-songT);
   panel(xrErr ? 'ERROR|'+xrErr
-    : songT<0 ? 'UNICORN SUGARWORLD|Apocalypse \u00b7 raise the horn'
+    : songT<0 ? 'UNICORN SUGARWORLD|Apocalypse \u00b7 '+(tipNow?'raise the horn':'controller not seen')
     : sleep>0 ? 'SLEEP|'+score.toLocaleString()
     : score.toLocaleString()+(combo>4?'   '+mult+'\u00d7':'')+'|'+
-      Math.floor(left/60)+':'+String(Math.floor(left%60)).padStart(2,'0'));
-  cinst.set([0,2.25,-3.1, 1.7,.42, 0, 0, 1,.94,.86, .92, 0,0,1,1]);
+      Math.floor(left/60)+':'+String(Math.floor(left%60)).padStart(2,'0')+
+      '   ranks '+live.length+' / quads '+icount+(tipNow?' / horn':' / NO HORN'));
+  cinst.set([0,1.85,-2.4, 1.5,.38, 0, 0, 1,.94,.86, .95, 0,0,1,1]);
   gl.bindBuffer(gl.ARRAY_BUFFER,cvbo); gl.bufferSubData(gl.ARRAY_BUFFER,0,cinst);
   gl.bindVertexArray(cvao); gl.useProgram(pQuad);
   gl.uniformMatrix4fv(uVP,false,vp); gl.uniform1f(uFull,1);
