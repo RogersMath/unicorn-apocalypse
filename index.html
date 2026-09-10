@@ -87,11 +87,10 @@ Come, little ones. You only feed my ambition.</div>
 <div class="scr on" id="title">
   <div class="lbl">Unicorn Sugarworld</div>
   <h1>Apocalypse</h1>
-  <h2>One blade. Seven colours. Take them all.</h2>
+  <h2>Anansi's venom. The Grim's memory. Your hands.</h2>
   <div class="row">
     <button class="pill" id="mDesk">Desktop<b>MOUSE</b></button>
     <button class="pill" id="mTouch">Mobile<b>SWIPE</b></button>
-    <button class="pill" id="mXR" style="display:none">Headset<b>ROOM SCALE</b></button>
   </div>
   <div class="lbl" id="tbest" style="margin:16px 0 0"></div>
   <div class="by">Made by Jesse Rogers for JS13kGames</div>
@@ -141,8 +140,6 @@ function saveBest(){ if(score<=best) return; best=score;
   try{ localStorage.setItem('usaBest',best); }catch(e){} }
 
 let tipPrev=null, tipNow=null, swing=0, bladeBase=null, bladeQuad=null;
-let xrMode=false, xrSession=null, xrRef=null;
-let worldYaw=0, yawSet=false, xrErr='', btnWas=false;
 let flash=0, absorb=0, pointerXY=null, pointerDown=false;
 /* A phone in portrait sees far less width than a monitor. Squeeze the lanes
    and the ranks to fit, instead of charging down corridors nobody can reach. */
@@ -495,13 +492,6 @@ function persp(fovy,asp,n,f,out){ const t=1/Math.tan(fovy/2); out.fill(0);
 function lookFrom(px,py,pz,out){ out.fill(0); out[0]=out[5]=out[10]=out[15]=1;
   out[12]=-px; out[13]=-py; out[14]=-pz; return out; }
 const mP=new Float32Array(16), mV=new Float32Array(16), mVP=new Float32Array(16);
-const mY=new Float32Array(16), mTmp=new Float32Array(16);
-/* rotation about Y, column major */
-function yawMat(a,out){ const c=Math.cos(a),s=Math.sin(a);
-  out.fill(0); out[0]=c; out[2]=-s; out[8]=s; out[10]=c; out[5]=out[15]=1; return out; }
-/* bring a headset-space point back into world space */
-function unyaw(p){ const c=Math.cos(worldYaw), s=Math.sin(worldYaw);
-  return [c*p[0]-s*p[2], p[1], s*p[0]+c*p[2]]; }
 function project(vp,x,y,z){
   const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];
   if(w<=0.0001) return null;
@@ -705,7 +695,7 @@ function startRun(){
   audioStart=actx.currentTime+PREROLL;
   running=true; paused=false; mult=1;
   $('hud').classList.add('on');
-  if(!xrMode) $('gear').classList.add('on');
+  $('gear').classList.add('on');
   $('pause').classList.remove('on'); $('open').className='';
   if(musicBus) musicBus.gain.value=musicOn?.5:0;
   if(sfxBus) sfxBus.gain.value=sfxOn?.55:0;
@@ -755,24 +745,17 @@ function trySlice(){
   // length of the blade itself at both ends of that path
   const bb=bladeBase||[tipNow[0],tipNow[1]-.6,tipNow[2]];
 
-  /* On a flat screen the honest question is "did the drawn horn cross the drawn
-     rank", so the test happens where both are drawn: projected screen space.
-     Any part of the horn counts, and so does the ground it swept between
-     frames. In XR the horn is a real object and the test stays in world space. */
-  const flat=!xrMode;
+  /* The honest question is "did the drawn horn cross the drawn rank", so the
+     test happens where both are drawn: projected screen space. Any part of the
+     horn counts, and so does the ground it swept between frames. */
   const ASP=outW/outH;
-  let P0,P1,PB;
-  if(flat){
-    P0=project(mVP,tipPrev[0],tipPrev[1],tipPrev[2]);
-    P1=project(mVP,tipNow[0],tipNow[1],tipNow[2]);
-    PB=project(mVP,bb[0],bb[1],bb[2]);
-    if(!P0||!P1||!PB) return;
-  }
-  const WREACH=Math.max(cw,ch)*.62+.30;
+  const P0=project(mVP,tipPrev[0],tipPrev[1],tipPrev[2]),
+        P1=project(mVP,tipNow[0],tipNow[1],tipNow[2]),
+        PB=project(mVP,bb[0],bb[1],bb[2]);
+  if(!P0||!P1||!PB) return;
   for(const c of live){
     if(c.hit || Math.abs(c.z-HITZ)>WIN) continue;
     let d, REACH;
-    if(flat){
       const C=project(mVP,c.x,c.y,c.z), E=project(mVP,c.x+cw*.5,c.y+ch*.5,c.z);
       if(!C||!E) continue;
       REACH=Math.max(Math.abs(E[0]-C[0])*ASP, Math.abs(E[1]-C[1]))+.075;
@@ -781,13 +764,6 @@ function trySlice(){
         segDist(P0[0]*ASP,P0[1],P1[0]*ASP,P1[1], cx,cy),
         segDist(PB[0]*ASP,PB[1],P1[0]*ASP,P1[1], cx,cy),
         segDist(PB[0]*ASP,PB[1],P0[0]*ASP,P0[1], cx,cy));
-    } else {
-      REACH=WREACH;
-      d=Math.min(
-        segDist(tipPrev[0],tipPrev[1],tipNow[0],tipNow[1], c.x,c.y),
-        segDist(bb[0],bb[1],tipNow[0],tipNow[1], c.x,c.y),
-        segDist(bb[0],bb[1],tipPrev[0],tipPrev[1], c.x,c.y));
-    }
     if(d>REACH) continue;
     c.hit=true;
     const tint=TINTS[(c.b|0)%7];
@@ -801,7 +777,7 @@ function trySlice(){
       absorb=1; flash=.55;
       splitCard(c,ux,uy,tint);
       burst(c.x,c.y,c.z,ux,uy,10,tint);
-      sfxSlice(true); strum((c.b|0)%7, .55+.45*Math.min(combo,12)/12); haptic(.7,30);
+      sfxSlice(true); strum((c.b|0)%7, .55+.45*Math.min(combo,12)/12);
       toast(timing>.62?'GOOD HIT':(c.z<HITZ?'TOO EARLY':'TOO LATE'),
             timing>.62?'good':'off');
       cardPoke(c, .30+.18*Math.min(combo,10)/10);
@@ -811,13 +787,6 @@ function trySlice(){
 function cardPoke(c,amp){
   const p=project(mVP,c.x,c.y,c.z);
   if(p) poke(p[0],p[1],amp);
-}
-function haptic(s,ms){
-  if(!xrSession) return;
-  for(const src of xrSession.inputSources){
-    const h=src.gamepad&&(src.gamepad.hapticActuators||[])[0];
-    if(h&&h.pulse) try{ h.pulse(s,ms); }catch(e){}
-  }
 }
 function step(dt){
   songT=actx?(actx.currentTime-audioStart):songT+dt;
@@ -973,45 +942,6 @@ void main(){
 const pBGDraw=prog(FSV,BGD);
 const bgS=U(pBGDraw,'S'), bgD=U(pBGDraw,'uDark');
 
-/* ------------------- in-world panel (XR has no DOM) ---------------------- */
-const panCan=document.createElement('canvas'); panCan.width=1024; panCan.height=256;
-const panCtx=panCan.getContext('2d');
-const panTex=gl.createTexture();
-gl.bindTexture(gl.TEXTURE_2D,panTex);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-let panLast='';
-function panel(txt){
-  if(txt===panLast) return; panLast=txt;
-  panCtx.clearRect(0,0,1024,256);
-  panCtx.textAlign='center'; panCtx.textBaseline='middle'; panCtx.fillStyle='#fff';
-  const ls=txt.split('|');
-  ls.forEach((l,i)=>{ panCtx.font=(i?36:64)+'px Georgia,serif';
-    panCtx.fillText(l,512,(ls.length<2?128:80+i*90)); });
-  gl.bindTexture(gl.TEXTURE_2D,panTex);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
-  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,panCan);
-}
-function drawPanel(vp){
-  const left=Math.max(0,LAST_BEAT*SPB-songT);
-  panel(xrErr ? 'ERROR|'+xrErr
-    : songT<0 ? 'UNICORN SUGARWORLD|Apocalypse \u00b7 '+(tipNow?'raise the horn':'controller not seen')
-    : sleep>0 ? 'SLEEP|'+score.toLocaleString()
-    : score.toLocaleString()+(combo>4?'   '+mult+'\u00d7':'')+'|'+
-      Math.floor(left/60)+':'+String(Math.floor(left%60)).padStart(2,'0')+
-      '   ranks '+live.length+' / quads '+icount+(tipNow?' / horn':' / NO HORN'));
-  cinst.set([0,1.85,-2.4, 1.5,.38, 0, 0, 1,.94,.86, .95, 0,0,1,1]);
-  gl.bindBuffer(gl.ARRAY_BUFFER,cvbo); gl.bufferSubData(gl.ARRAY_BUFFER,0,cinst);
-  gl.bindVertexArray(cvao); gl.useProgram(pQuad);
-  gl.uniformMatrix4fv(uVP,false,vp); gl.uniform1f(uFull,1);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,panTex);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
-  gl.drawArraysInstanced(gl.TRIANGLE_STRIP,0,4,1);
-  gl.disable(gl.BLEND); gl.uniform1f(uFull,0); gl.bindVertexArray(null);
-}
-
 /* --------------------------- water passes -------------------------- */
 const KB=new Float32Array(32);
 let acc=0;
@@ -1074,7 +1004,6 @@ function flatTip(){
 let last=performance.now();
 function frame(now){
   requestAnimationFrame(frame);
-  if(xrMode) return;
   const dt=Math.min(.05,(now-last)/1000); last=now;
   const asp=outW/outH;
   persp(1.15,asp,.05,120,mP); lookFrom(0,FEYE,0,mV); mul(mP,mV,mVP);
@@ -1093,92 +1022,11 @@ function frame(now){
 }
 requestAnimationFrame(frame);
 
-/* ------------------------------ WebXR ------------------------------ */
-/* Comfort contract: the player never moves, the world never moves the player,
-   nothing rotates the view. The water layer is screen space, so it is left
-   OFF in the headset — a per-eye screen warp is exactly the wrong thing to
-   put in front of someone's face. */
-function xrFrame(t,frame){
-  const s=frame.session;
-  s.requestAnimationFrame(xrFrame);
-  const pose=frame.getViewerPose(xrRef);
-  if(!pose) return;
-  const now=performance.now(), dt=Math.min(.05,(now-last)/1000); last=now;
-
-  // The reference space's -Z is wherever the room was set up facing, which is
-  // not necessarily where the player is looking. Align the charge to their gaze
-  // once, on the first frame, and let a controller button re-align it.
-  const hm=pose.transform.matrix;
-  let recenter=!yawSet;
-  let btn=false;
-  for(const src of s.inputSources){
-    const g=src.gamepad;
-    if(g) for(const b of g.buttons) if(b.pressed) btn=true;
-  }
-  if(btn&&!btnWas) recenter=true;
-  btnWas=btn;
-  if(recenter){ worldYaw=Math.atan2(hm[8],hm[10]); yawSet=true; yawMat(worldYaw,mY); }
-
-  // the blade, brought out of headset space into the world
-  tipNow=null; bladeBase=null;
-  let best=null;
-  for(const src of s.inputSources){
-    if(!src.targetRaySpace) continue;
-    const p=frame.getPose(src.targetRaySpace,xrRef);
-    if(!p) continue;
-    if(!best||src.handedness==='right') best=p;
-  }
-  if(best){
-    const m=best.transform.matrix;
-    bladeBase=unyaw([m[12],m[13],m[14]]);
-    tipNow=unyaw([m[12]-m[8]*.78, m[13]-m[9]*.78, m[14]-m[10]*.78]);
-  }
-
-  try{
-    if(running) step(dt);
-    buildInstances();
-    xrErr='';
-  }catch(e){ xrErr=(e&&e.message||e)+''; }
-
-  const layer=s.renderState.baseLayer;
-  for(const v of pose.views){
-    const vp=layer.getViewport(v);
-    mul(v.transform.inverse.matrix, mY, mTmp);   // view * worldRotation
-    mul(v.projectionMatrix, mTmp, mVP);
-    drawScene(mVP,vp.width,vp.height,layer.framebuffer,vp.x,vp.y);
-    drawPanel(mVP);
-  }
-}
-async function enterXR(){
-  try{
-    const s=await navigator.xr.requestSession('immersive-vr',{optionalFeatures:['local-floor']});
-    xrSession=s; xrMode=true; mode='xr'; yawSet=false; xrErr='';
-    await gl.makeXRCompatible();
-    const layer=new XRWebGLLayer(s,gl,{framebufferScaleFactor:.9,antialias:false,depth:false});
-    s.updateRenderState({baseLayer:layer});
-    if(layer.fixedFoveation!==undefined) layer.fixedFoveation=1;
-    if(s.supportedFrameRates&&s.updateTargetFrameRate){
-      const r=[...s.supportedFrameRates].filter(x=>x>=70&&x<=75);
-      if(r.length) try{ await s.updateTargetFrameRate(r[0]); }catch(e){}
-    }
-    try{ xrRef=await s.requestReferenceSpace('local-floor'); }
-    catch(e){ xrRef=await s.requestReferenceSpace('local'); }
-    s.addEventListener('end',()=>{ xrMode=false; xrSession=null; mode='desk'; running=false;
-      $('hud').classList.remove('on'); $('title').classList.add('on'); });
-    hideAll(); startRun(); last=performance.now();
-    s.requestAnimationFrame(xrFrame);
-  }catch(e){ console.warn('XR failed',e); xrMode=false; }
-}
-if(navigator.xr&&navigator.xr.isSessionSupported)
-  navigator.xr.isSessionSupported('immersive-vr')
-    .then(ok=>{ if(ok) $('mXR').style.display='block'; }).catch(()=>{});
-
 /* ------------------------------- flow ------------------------------ */
 function hideAll(){ $('title').classList.remove('on'); $('end').classList.remove('on'); }
 if(best) $('tbest').textContent='BEST '+best.toLocaleString();
 $('mDesk').onclick =()=>{ mode='desk';  hideAll(); startRun(); };
 $('mTouch').onclick=()=>{ mode='touch'; hideAll(); startRun(); };
-$('mXR').onclick   =()=>{ initAudio(); enterXR(); };
 
 const RANKS=[[.95,'S'],[.88,'A'],[.75,'B'],[.55,'C'],[0,'D']];
 function finish(){
